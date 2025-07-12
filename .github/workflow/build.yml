@@ -1,0 +1,85 @@
+name: Build Chart Designer
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - os: macos-11
+            name: "macOS-11-Big-Sur"
+          - os: macos-12  
+            name: "macOS-12-Monterey"
+          - os: macos-13
+            name: "macOS-13-Ventura"
+        
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller matplotlib numpy
+        
+    - name: Build application
+      run: |
+        pyinstaller --onefile --windowed --name "Chart Designer" \
+          --hidden-import=matplotlib.backends.backend_tkagg \
+          --collect-all matplotlib \
+          graph.py
+          
+    - name: Create DMG (macOS 12+ only)
+      if: matrix.os != 'macos-11'
+      run: |
+        # Create a simple DMG
+        mkdir -p dmg_temp
+        cp -r "dist/Chart Designer.app" dmg_temp/
+        hdiutil create -volname "Chart Designer" -srcfolder dmg_temp -ov -format UDZO "Chart Designer-${{ matrix.name }}.dmg"
+        
+    - name: Upload App Bundle
+      uses: actions/upload-artifact@v3
+      with:
+        name: Chart-Designer-${{ matrix.name }}-App
+        path: dist/Chart Designer.app
+        
+    - name: Upload DMG (macOS 12+ only)
+      if: matrix.os != 'macos-11'
+      uses: actions/upload-artifact@v3
+      with:
+        name: Chart-Designer-${{ matrix.name }}-DMG
+        path: "Chart Designer-${{ matrix.name }}.dmg"
+
+  # Create a release if this is a tag push
+  release:
+    needs: build-macos
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          **/*.app
+          **/*.dmg
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
